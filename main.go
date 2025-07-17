@@ -1,0 +1,163 @@
+package main
+
+import (
+    "bytes"
+    "fmt"
+    "io"
+    "log"
+    "net/http"
+    "os"
+    "path/filepath"
+    "time"
+
+    "gopkg.in/yaml.v3"
+
+    "github.com/aws/aws-sdk-go/aws"
+    "github.com/aws/aws-sdk-go/aws/session"
+    "github.com/aws/aws-sdk-go/service/s3"
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+type Config struct {
+    PrometheusListenPort int      `yaml:"prometheusListenPort"`
+    TomlPaths            []string `yaml:"tomlPaths"`
+    ServicePaths         []string `yaml:"servicePaths"`
+    S3Bucket             string   `yaml:"s3Bucket"`
+    ChainDir             string   `yaml:"chainDir"`
+    AWSRegion            string   `yaml:"awsRegion"`
+}
+
+var (
+    uploadTS = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Namespace: "config_exporter",
+            Name:      "s3_lastmodified_timestamp",
+            Help:      "S3 object LastModified timestamp (Unix seconds) via GetObject",
+        },
+        []string{"bucket", "key"},
+    )
+)
+
+func init() {
+    prometheus.MustRegister(uploadTS)
+}
+
+func main() {
+    // 1) Load config.yaml
+    raw, err := os.ReadFile("config.yaml")
+    if err != nil {
+        log.Fatalf("cannot read config.yaml: %v", err)
+    }
+    var cfg Config
+    if err := yaml.Unmarshal(raw, &cfg); err != nil {
+        log.Fatalf("cannot parse config.yaml: %v", err)
+    }
+
+    // 2) AWS session (SDK v1)
+    sess, err := session.NewSession(&aws.Config{
+        Region: aws.String(cfg.AWSRegion),
+    })
+    if err != nil {
+        log.Fatalf("failed to create AWS session: %v", err)
+    }
+    s3cli := s3.New(sess)
+
+    // 3) Immediate upload
+    runAllUploads(s3cli, &cfg)
+
+    // 4) Scheduler: next midnight or noon
+    go func() {
+        for {
+            next := computeNextRun(time.Now())
+            log.Printf("next upload at %s", next.Format(time.RFC3339))
+            time.Sleep(time.Until(next))
+            runAllUploads(s3cli, &cfg)
+        }
+    }()
+
+    // 5) Prometheus endpoint
+    http.Handle("/metrics", promhttp.Handler())
+    addr := fmt.Sprintf(":%d", cfg.PrometheusListenPort)
+    log.Printf("listening on %s", addr)
+    log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// runAllUploads uploads all tomlPaths and servicePaths
+func runAllUploads(cli *s3.S3, cfg *Config) {
+    files := append(cfg.TomlPaths, cfg.ServicePaths...)
+    for _, localPath := range files {
+        uploadSingle(cli, cfg, localPath)
+    }
+}
+
+// uploadSingle does PutObject then GetObject(range=0-0) to get LastModified
+func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
+    data, err := os.ReadFile(localPath)
+    if err != nil {
+        log.Printf("[ERROR] read %s: %v", localPath, err)
+        return
+    }
+    key := filepath.Join(cfg.ChainDir, filepath.Base(localPath))
+    s3uri := fmt.Sprintf("s3://%s/%s", cfg.S3Bucket, key)
+    log.Printf("uploading %s → %s", localPath, s3uri)
+
+    // PutObject
+    if _, err := cli.PutObject(&s3.PutObjectInput{
+        Bucket: aws.String(cfg.S3Bucket),
+        Key:    aws.String(key),
+        Body:   bytes.NewReader(data),
+    }); err != nil {
+        log.Printf("[ERROR] PutObject %s: %v", key, err)
+        return
+    }
+
+    // GetObject with Range=0-0 to fetch LastModified header
+    resp, err := cli.GetObject(&s3.GetObjectInput{
+        Bucket: aws.String(cfg.S3Bucket),
+        Key:    aws.String(key),
+        Range:  aws.String("bytes=0-0"),
+    })
+    if err != nil {
+        log.Printf("[WARN] GetObject %s: %v", key, err)
+        return
+    }
+    // discard body
+    io.Copy(io.Discard, resp.Body)
+    resp.Body.Close()
+
+    if resp.LastModified != nil {
+        ts := float64(resp.LastModified.Unix())
+        uploadTS.WithLabelValues(cfg.S3Bucket, key).Set(ts)
+        log.Printf("Recorded LastModified for %s: %s",
+            key, resp.LastModified.UTC().Format(time.RFC3339))
+    } else {
+        log.Printf("[WARN] no LastModified for %s", key)
+    }
+}
+
+// computeNextRun finds next 00:00 or 12:00 after now
+func computeNextRun(now time.Time) time.Time {
+    y, m, d := now.Date()
+    loc := now.Location()
+    midnight := time.Date(y, m, d, 0, 0, 0, 0, loc)
+    noon := time.Date(y, m, d, 12, 0, 0, 0, loc)
+
+    var candidates []time.Time
+    if midnight.After(now) {
+        candidates = append(candidates, midnight)
+    }
+    if noon.After(now) {
+        candidates = append(candidates, noon)
+    }
+    if len(candidates) == 0 {
+        candidates = append(candidates, midnight.Add(24*time.Hour))
+    }
+    next := candidates[0]
+    for _, t := range candidates {
+        if t.Before(next) {
+            next = t
+        }
+    }
+    return next
+}
