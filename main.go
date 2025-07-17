@@ -55,9 +55,14 @@ func main() {
     }
 
     // 2) AWS session (SDK v1)
-    sess, err := session.NewSession(&aws.Config{
-        Region: aws.String(cfg.AWSRegion),
-    })
+    sess, err := session.NewSessionWithOptions(session.Options{
+		Profile: "config-diff",             
+		SharedConfigState: session.SharedConfigEnable,
+		Config: aws.Config{
+			Region: aws.String(cfg.AWSRegion),
+		},
+	})
+
     if err != nil {
         log.Fatalf("failed to create AWS session: %v", err)
     }
