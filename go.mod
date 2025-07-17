@@ -1,4 +1,4 @@
-module config-diff-erxporter
+module config-diff-exporter
 
 go 1.23.3
 
