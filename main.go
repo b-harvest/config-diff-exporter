@@ -88,11 +88,35 @@ func main() {
 }
 
 // runAllUploads uploads all tomlPaths and servicePaths
+// func runAllUploads(cli *s3.S3, cfg *Config) {
+//     for _, localPath := range cfg.Paths {
+//         uploadSingle(cli, cfg, localPath)
+//     }
+// }
 func runAllUploads(cli *s3.S3, cfg *Config) {
-    for _, localPath := range cfg.Paths {
-        uploadSingle(cli, cfg, localPath)
+    for _, p := range cfg.Paths {
+        fi, err := os.Stat(p)
+        if err != nil {
+            log.Printf("[ERROR] stat %s: %v", p, err)
+            continue
+        }
+        if fi.IsDir() {
+            entries, err := os.ReadDir(p)
+            if err != nil {
+                log.Printf("[ERROR] read dir %s: %v", p, err)
+                continue
+            }
+            for _, ent := range entries {
+                local := filepath.Join(p, ent.Name())
+                uploadSingle(cli, cfg, local)
+            }
+        } else {
+            uploadSingle(cli, cfg, p)
+        }
     }
 }
+
+
 
 // uploadSingle does PutObject then GetObject(range=0-0) to get LastModified
 func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
