@@ -75,16 +75,14 @@ func main() {
     }
     s3cli := s3.New(sess)
 
-    // 3) Immediate upload
-    runAllUploads(s3cli, &cfg)
-
     // 4) Scheduler: next midnight or noon
     go func() {
         for {
+            runAllUploads(s3cli, &cfg)
+
             next := computeNextRun(time.Now())
             log.Printf("next upload at %s", next.Format(time.RFC3339))
             time.Sleep(time.Until(next))
-            runAllUploads(s3cli, &cfg)
         }
     }()
 
