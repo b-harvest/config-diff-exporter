@@ -39,7 +39,7 @@ var (
     uploadEventTS= prometheus.NewGaugeVec(
         prometheus.GaugeOpts{
             Namespace: "config_exporter",
-            Name:      "Last_upload_event_sec",
+            Name:      "upload_duration_sec",
             Help:      "successful upload event",
         },
         []string{"bucket", "key"},
@@ -47,7 +47,8 @@ var (
 )
 
 func init() {
-    prometheus.MustRegister(uploadTS, uploadEventTS)
+    prometheus.MustRegister(uploadTS)
+    prometheus.MustRegister(uploadEventTS)
 }
 
 func main() {
@@ -164,15 +165,13 @@ func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
         uploadTS.WithLabelValues(cfg.S3Bucket, key).Set(ts)
         log.Printf("Recorded LastModified for %s: %s",
             key, resp.LastModified.UTC().Format(time.RFC3339))
-        
-        now := float64(time.Now().Unix())
-        uploadEventTS.WithLabelValues(cfg.S3Bucket, key).Set(now)
-        log.Printf("Recorded upload event timestamp %s: %s",
-            key, time.Unix(int64(now), 0).UTC().Format(time.RFC3339))
-            
-    } else {
-        log.Printf("[WARN] no LastModified for %s", key)
-    }
+    } 
+    // else {
+    //     log.Printf("[WARN] no LastModified for %s", key)
+    // }
+    elapsed := time.Since(start).Seconds()
+    uploadDuration.WithLabelValues(cfg.S3Bucket, key).Set(elapsed)
+    log.Printf("Recorded upload duration for %s: %.3f sec", key, elapsed)
 }
 
 // computeNextRun finds next 00:00 or 12:00 after now
