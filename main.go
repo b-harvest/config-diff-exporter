@@ -168,7 +168,7 @@ func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
             key, resp.LastModified.UTC().Format(time.RFC3339))
         
         now := float64(time.Now().Unix())
-        uploadEventTS.WithLabelValues(cfg.S3Bucket, key).set(now)
+        uploadEventTS.WithLabelValues(cfg.S3Bucket, key).Set(now)
         log.Printf("Recorded upload event timestamp %s: %s",
             key, time.Unix(int64(now)).UTC().Format(time.RFC3339))
             
