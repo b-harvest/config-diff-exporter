@@ -36,7 +36,7 @@ var (
         },
         []string{"bucket", "key"},
     )
-    uploadEventTS= prometheus.NewGaugeVec(
+    uploadDuration= prometheus.NewGaugeVec(
         prometheus.GaugeOpts{
             Namespace: "config_exporter",
             Name:      "upload_duration_sec",
@@ -48,7 +48,7 @@ var (
 
 func init() {
     prometheus.MustRegister(uploadTS)
-    prometheus.MustRegister(uploadEventTS)
+    prometheus.MustRegister(uploadDuration)
 }
 
 func main() {
@@ -127,6 +127,8 @@ func runAllUploads(cli *s3.S3, cfg *Config) {
 
 // uploadSingle does PutObject then GetObject(range=0-0) to get LastModified
 func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
+    start:= time.Now()
+
     data, err := os.ReadFile(localPath)
     if err != nil {
         log.Printf("[ERROR] read %s: %v", localPath, err)
