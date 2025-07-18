@@ -21,8 +21,7 @@ import (
 
 type Config struct {
     PrometheusListenPort int      `yaml:"prometheusListenPort"`
-    TomlPaths            []string `yaml:"tomlPaths"`
-    ServicePaths         []string `yaml:"servicePaths"`
+    Paths                []string `yaml:"paths"`
     S3Bucket             string   `yaml:"s3Bucket"`
     ChainDir             string   `yaml:"chainDir"`
     AWSRegion            string   `yaml:"awsRegion"`
@@ -90,8 +89,7 @@ func main() {
 
 // runAllUploads uploads all tomlPaths and servicePaths
 func runAllUploads(cli *s3.S3, cfg *Config) {
-    files := append(cfg.TomlPaths, cfg.ServicePaths...)
-    for _, localPath := range files {
+    for _, localPath := range cfg.Paths {
         uploadSingle(cli, cfg, localPath)
     }
 }
