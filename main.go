@@ -9,6 +9,7 @@ import (
     "os"
     "path/filepath"
     "time"
+    "sync"
 
     "gopkg.in/yaml.v3"
 
@@ -36,19 +37,36 @@ var (
         },
         []string{"bucket", "key"},
     )
-    uploadDuration= prometheus.NewGaugeVec(
+    sinceUpload= prometheus.NewGaugeVec(
         prometheus.GaugeOpts{
             Namespace: "config_exporter",
-            Name:      "upload_duration_sec",
+            Name:      "time_since_upload",
             Help:      "successful upload event",
         },
         []string{"bucket", "key"},
     )
+    lastUploadMu sync.Mutex
+    lastUpload   = map[string]time.Time{} // map["bucket|key"] = time
+
 )
 
 func init() {
     prometheus.MustRegister(uploadTS)
-    prometheus.MustRegister(uploadDuration)
+    prometheus.MustRegister(sinceUpload)
+
+    go func() {
+        ticker := time.NewTicker(time.Second)
+        for now := range ticker.C {
+            lastUploadMu.Lock()
+            for bk, t0 := range lastUpload {
+                parts := strings.SplitN(bk, "|", 2)
+                bucket, key := parts[0], parts[1]
+                age := now.Sub(t0).Seconds()
+                sinceUpload.WithLabelValues(bucket, key).Set(age)
+            }
+            lastUploadMu.Unlock()
+        }
+    }()
 }
 
 func main() {
@@ -127,16 +145,25 @@ func runAllUploads(cli *s3.S3, cfg *Config) {
 
 // uploadSingle does PutObject then GetObject(range=0-0) to get LastModified
 func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
-    start:= time.Now()
 
     data, err := os.ReadFile(localPath)
     if err != nil {
         log.Printf("[ERROR] read %s: %v", localPath, err)
         return
     }
+
+    bucket := cfg.S3Bucket
+
     key := filepath.Join(cfg.ChainDir, filepath.Base(localPath))
     s3uri := fmt.Sprintf("s3://%s/%s", cfg.S3Bucket, key)
     log.Printf("uploading %s → %s", localPath, s3uri)
+
+    now := time.Now()
+    lastUploadMu.Lock()
+    lastUpload[bucket+"|"+key] = now
+    lastUploadMu.Unlock()
+    // 즉시 age 를 0으로 찍어준다
+    uploadAge.WithLabelValues(bucket, key).Set(0)
 
     // PutObject
     if _, err := cli.PutObject(&s3.PutObjectInput{
@@ -171,9 +198,6 @@ func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
     // else {
     //     log.Printf("[WARN] no LastModified for %s", key)
     // }
-    elapsed := time.Since(start).Seconds()
-    uploadDuration.WithLabelValues(cfg.S3Bucket, key).Set(elapsed)
-    log.Printf("Recorded upload duration for %s: %.3f sec", key, elapsed)
 }
 
 // computeNextRun finds next 00:00 or 12:00 after now
