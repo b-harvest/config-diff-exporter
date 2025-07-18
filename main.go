@@ -36,10 +36,18 @@ var (
         },
         []string{"bucket", "key"},
     )
+    uploadEventTS= prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Namespace: "config_exporter",
+            Name:      "Last_upload_event_sec",
+            Help:      "successful upload event",
+        },
+        []string{"bucket", "key"},
+    )
 )
 
 func init() {
-    prometheus.MustRegister(uploadTS)
+    prometheus.MustRegister(uploadTS, uploadEventTS)
 }
 
 func main() {
@@ -158,6 +166,12 @@ func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
         uploadTS.WithLabelValues(cfg.S3Bucket, key).Set(ts)
         log.Printf("Recorded LastModified for %s: %s",
             key, resp.LastModified.UTC().Format(time.RFC3339))
+        
+        now := float64(time.Now().Unix())
+        uploadEventTS.WithLabelValues(cfg.S3Bucket, key).set(now)
+        log.Printf("Recorded upload event timestamp %s: %s",
+            key, time.Unix(int64(now)).UTC().Format(time.RFC3339))
+            
     } else {
         log.Printf("[WARN] no LastModified for %s", key)
     }
