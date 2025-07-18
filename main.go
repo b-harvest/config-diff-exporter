@@ -10,8 +10,8 @@ import (
     "path/filepath"
     "time"
     "sync"
-    "string"
-
+    "strings"
+    
     "gopkg.in/yaml.v3"
 
     "github.com/aws/aws-sdk-go/aws"
