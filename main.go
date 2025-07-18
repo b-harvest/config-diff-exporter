@@ -10,6 +10,7 @@ import (
     "path/filepath"
     "time"
     "sync"
+    "string"
 
     "gopkg.in/yaml.v3"
 
@@ -163,7 +164,7 @@ func uploadSingle(cli *s3.S3, cfg *Config, localPath string) {
     lastUpload[bucket+"|"+key] = now
     lastUploadMu.Unlock()
     // 즉시 age 를 0으로 찍어준다
-    uploadAge.WithLabelValues(bucket, key).Set(0)
+    sinceUpload.WithLabelValues(bucket, key).Set(0)
 
     // PutObject
     if _, err := cli.PutObject(&s3.PutObjectInput{
